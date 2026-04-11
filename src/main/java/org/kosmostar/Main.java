@@ -13,6 +13,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.*;
+import javafx.scene.text.Text;
 import javafx.stage.Stage;
 
 import org.mapsforge.core.model.LatLong;
@@ -151,33 +152,30 @@ public class Main extends Application {
      * Renders the Interactive Map UI
      */
     private void showMapUI() {
-        AwtGraphicFactory.INSTANCE.getClass(); // Init AWT Graphic Factory
-        StackPane root = new StackPane();
+        AwtGraphicFactory.INSTANCE.getClass();
+        BorderPane root = new BorderPane(); // Changed from StackPane
         SwingNode swingNode = new SwingNode();
 
-        // --- NEW PANEL SETUP ---
+        // --- SIDEBAR SETUP ---
         poiPanel = new VBox(10);
         poiPanel.setPadding(new Insets(15));
-        poiPanel.setStyle("-fx-background-color: rgba(255, 255, 255, 0.9); -fx-background-radius: 8; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.4), 10, 0, 0, 0);");
-        poiPanel.setMaxSize(250, 150);
+        poiPanel.setPrefWidth(380); // Much wider for readability
+        poiPanel.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #bdc3c7; -fx-border-width: 0 0 0 1;");
 
-        // Pin the panel to the Top Right
-        StackPane.setAlignment(poiPanel, Pos.TOP_RIGHT);
-        StackPane.setMargin(poiPanel, new Insets(20));
-
-        // Initialize panel content based on POI availability
+        // Initialize panel content
         if (poiFile == null) {
             setupPoiDownloadButton();
         } else {
             setupPoiSearchUI();
         }
 
-        // Add the map first, then the panel so it floats on top
-        root.getChildren().addAll(swingNode, poiPanel);
+        // Map in Center, POI list on the Right
+        root.setCenter(swingNode);
+        root.setRight(poiPanel);
 
         SwingUtilities.invokeLater(() -> createMapContent(swingNode));
 
-        Scene scene = new Scene(root, 1024, 768);
+        Scene scene = new Scene(root, 1200, 800); // Made default window slightly wider
         mainStage.setScene(scene);
         mainStage.show();
     }
@@ -363,7 +361,7 @@ public class Main extends Application {
     }
 
     private TitledPane createPoiPane(org.mapsforge.poi.storage.PointOfInterest poi) {
-        VBox content = new VBox(5);
+        VBox content = new VBox(8);
         content.setPadding(new Insets(10));
 
         // 1. Add Category Info
@@ -376,40 +374,42 @@ public class Main extends Application {
         // 2. Add all Tags (The "hidden" data)
         GridPane detailsGrid = new GridPane();
         detailsGrid.setHgap(10);
-        detailsGrid.setVgap(3);
+        detailsGrid.setVgap(6);
+
+        // --- FORCE COLUMN SIZING ---
+        ColumnConstraints col1 = new ColumnConstraints();
+        col1.setMinWidth(80); // Fixed width for keys (e.g. "Cuisine:")
+
+        ColumnConstraints col2 = new ColumnConstraints();
+        col2.setHgrow(Priority.ALWAYS); // Value column takes the rest of the space
+
+        detailsGrid.getColumnConstraints().addAll(col1, col2);
 
         int row = 0;
         for (org.mapsforge.core.model.Tag tag : poi.getTags()) {
-            Label key = new Label(tag.key + ":");
-            key.setStyle("-fx-font-weight: bold; -fx-text-fill: #7f8c8d;");
-            Label val = new Label(tag.value);
-            val.setStyle("-fx-text-fill: #111111;");
-            val.setWrapText(true);
+            Label key = new Label(tag.key.replace("_", " ") + ":"); // Clean up underscores
+            key.setStyle("-fx-font-weight: bold; -fx-text-fill: #7f8c8d; -fx-font-size: 11px;");
+
+            // Use a Text node for the value to allow multi-line wrapping
+            Text val = new Text(tag.value);
+            val.setWrappingWidth(240); // Matches the remaining space in the 380px panel
 
             detailsGrid.add(key, 0, row);
             detailsGrid.add(val, 1, row);
             row++;
         }
 
-        if (row == 0) {
-            content.getChildren().add(new Label("No extra data available."));
-        } else {
-            content.getChildren().add(detailsGrid);
-        }
+        content.getChildren().add(detailsGrid);
 
-        // 3. Create the Pane
         String title = (poi.getName() != null) ? poi.getName() : "Unnamed Place";
         TitledPane pane = new TitledPane(title, content);
-        pane.setAnimated(true);
-
         return pane;
     }
 
     private void setupPoiSearchUI() {
         poiPanel.getChildren().clear();
-        poiPanel.setPrefWidth(300); // Make it slightly wider for details
-        poiPanel.setMaxHeight(500); // Allow it to be taller
-
+        poiPanel.setPrefWidth(400); // Make it slightly wider for details
+//        poiPanel.setMaxHeight(500);
         searchBox = new TextField();
         searchBox.setPromptText("Filter results (e.g. cafe)...");
 
