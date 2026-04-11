@@ -1,5 +1,6 @@
 package org.kosmostar;
 
+import javafx.animation.PauseTransition;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
@@ -16,6 +17,8 @@ import javafx.scene.layout.*;
 import javafx.scene.text.Text;
 import javafx.stage.Stage;
 
+import javafx.util.Duration;
+import org.mapsforge.core.model.BoundingBox;
 import org.mapsforge.core.model.LatLong;
 import org.mapsforge.core.model.Tag;
 import org.mapsforge.map.awt.graphics.AwtGraphicFactory;
@@ -38,6 +41,7 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.io.*;
+import java.util.Collection;
 import java.util.List;
 
 public class Main extends Application {
@@ -50,6 +54,8 @@ public class Main extends Application {
     private File mapFile;
     private File poiFile;
     private final File themeFile = new File(dataDir, "Elevate.xml"); // The main Elevate theme file
+
+    private PauseTransition searchDebounce = new PauseTransition(Duration.millis(300));
 
     private MapView mapView;
     private Stage mainStage;
@@ -306,44 +312,39 @@ public class Main extends Application {
      * Handle the map click interactions (Query POI db here)
      */
     private void handleMapClick(LatLong location) {
-        if (poiPersistenceManager == null || mainLayout.getRight()==null) return;
+        if (poiPersistenceManager == null || mainLayout.getRight() == null) return;
 
-        int searchRadiusMeters = 500;
-        int resultLimit = 30;
-
-        // Task now returns a List of POIs
-        Task<List<org.mapsforge.poi.storage.PointOfInterest>> queryTask = new Task<>() {
+        Task<List<PointOfInterest>> queryTask = new Task<>() {
             @Override
-            protected List<org.mapsforge.poi.storage.PointOfInterest> call() {
-                String filterText = searchBox.getText().toLowerCase();
-                java.util.Collection<org.mapsforge.poi.storage.PointOfInterest> pois =
-                        poiPersistenceManager.findNearPosition(
-                                location, searchRadiusMeters, null, null, location, resultLimit, true
-                        );
-
-                // Filter them in the background thread
-                return pois.stream()
-                        .filter(p -> p.getName() != null && p.getName().toLowerCase().contains(filterText))
-                        .collect(java.util.stream.Collectors.toList());
+            protected List<PointOfInterest> call() {
+                // Search 500 meters around the click, no text pattern (null)
+                Collection<PointOfInterest> pois = poiPersistenceManager.findNearPosition(
+                        location, 500, null, null, location, 30, true
+                );
+                return new java.util.ArrayList<>(pois);
             }
         };
 
-        queryTask.setOnSucceeded(e -> {
-            List<PointOfInterest> results = queryTask.getValue();
-            poiAccordion.getPanes().clear();
-
-            if (results.isEmpty()) {
-                TitledPane empty = new TitledPane("No results found", new Label("Try clicking elsewhere."));
-                poiAccordion.getPanes().add(empty);
-                return;
-            }
-
-            for (org.mapsforge.poi.storage.PointOfInterest poi : results) {
-                poiAccordion.getPanes().add(createPoiPane(poi));
-            }
-        });
-
+        queryTask.setOnSucceeded(e -> updateResultsList(queryTask.getValue()));
         new Thread(queryTask).start();
+    }
+
+    /**
+     * Reusable method to fill the accordion with POI data
+     */
+    private void updateResultsList(List<PointOfInterest> results) {
+        poiAccordion.getPanes().clear();
+
+        if (results == null || results.isEmpty()) {
+            TitledPane empty = new TitledPane("No results found", new Label("Try another search."));
+            poiAccordion.getPanes().add(empty);
+            return;
+        }
+
+        for (PointOfInterest poi : results) {
+            // Just add the pane; the button inside will handle the movement
+            poiAccordion.getPanes().add(createPoiPane(poi));
+        }
     }
 
     private void setupPoiDownloadButton() {
@@ -376,39 +377,33 @@ public class Main extends Application {
         poiPanel.getChildren().addAll(new Label("Places Database"), info, startDownloadBtn);
     }
 
-    private TitledPane createPoiPane(org.mapsforge.poi.storage.PointOfInterest poi) {
-        VBox content = new VBox(8);
+    private TitledPane createPoiPane(PointOfInterest poi) {
+        VBox content = new VBox(12); // Slightly more spacing
         content.setPadding(new Insets(10));
 
-        // 1. Add Category Info
-        if (poi.getCategory() != null) {
-            Label catLabel = new Label("Category: " + poi.getCategory().getTitle().split("/")[0]);
+        // 1. Category Label
+        if (poi.getCategory() != null && poi.getCategory().getTitle() != null) {
+            String catTitle = poi.getCategory().getTitle();
+            Label catLabel = new Label("Category: " + (catTitle.contains("/") ? catTitle.split("/")[0] : catTitle));
             catLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #2c3e50;");
             content.getChildren().add(catLabel);
         }
 
-        // 2. Add all Tags (The "hidden" data)
+        // 2. Details Grid
         GridPane detailsGrid = new GridPane();
         detailsGrid.setHgap(10);
         detailsGrid.setVgap(6);
-
-        // --- FORCE COLUMN SIZING ---
-        ColumnConstraints col1 = new ColumnConstraints();
-        col1.setMinWidth(100); // Fixed width for keys (e.g. "Cuisine:")
-
+        ColumnConstraints col1 = new ColumnConstraints(100);
         ColumnConstraints col2 = new ColumnConstraints();
-        col2.setHgrow(Priority.ALWAYS); // Value column takes the rest of the space
-
+        col2.setHgrow(Priority.ALWAYS);
         detailsGrid.getColumnConstraints().addAll(col1, col2);
 
         int row = 0;
-        for (org.mapsforge.core.model.Tag tag : poi.getTags()) {
-            Label key = new Label(tag.key.replace("_", " ") + ":"); // Clean up underscores
+        for (Tag tag : poi.getTags()) {
+            Label key = new Label(tag.key.replace("_", " ") + ":");
             key.setStyle("-fx-font-weight: bold; -fx-text-fill: #7f8c8d; -fx-font-size: 11px;");
-
-            // Use a Text node for the value to allow multi-line wrapping
             Text val = new Text(tag.value);
-            val.setWrappingWidth(240); // Matches the remaining space in the 380px panel
+            val.setWrappingWidth(220);
 
             detailsGrid.add(key, 0, row);
             detailsGrid.add(val, 1, row);
@@ -416,6 +411,25 @@ public class Main extends Application {
         }
 
         content.getChildren().add(detailsGrid);
+
+        // 3. THE "FLY TO" BUTTON
+        Button flyButton = new Button("📍 Show on Map");
+//        flyButton.setMaxWidth(Double.MAX_VALUE); // Fill width
+        flyButton.setStyle("-fx-background-color: #3498db; -fx-text-fill: white; " +
+                "-fx-font-weight: bold; -fx-padding: 8; -fx-background-radius: 5; -fx-cursor: hand;");
+
+        // Hover effect
+        flyButton.setOnMouseEntered(e -> flyButton.setStyle(flyButton.getStyle() + "-fx-background-color: #2980b9;"));
+        flyButton.setOnMouseExited(e -> flyButton.setStyle(flyButton.getStyle() + "-fx-background-color: #3498db;"));
+
+        flyButton.setOnAction(e -> {
+            // Center the map on this specific POI
+            mapView.getModel().mapViewPosition.setCenter(poi.getLatLong());
+            // Optional: Zoom in close enough to see the street level
+            mapView.getModel().mapViewPosition.setZoomLevel((byte) 16);
+        });
+
+        content.getChildren().add(flyButton);
 
         String title = (poi.getName() != null) ? poi.getName() : "Unnamed Place";
         TitledPane pane = new TitledPane(title, content);
@@ -442,29 +456,76 @@ public class Main extends Application {
     }
 
     private void handleOpenSidebar() {
-        if (poiFile == null) {
-            setupPoiDownloadButton();
-        } else {
-            setupPoiSearchUI();
+        // Only build the UI if it's the very first time opening it
+        if (poiPanel.getChildren().isEmpty()) {
+            if (poiFile == null) {
+                setupPoiDownloadButton();
+            } else {
+                setupPoiSearchUI();
+            }
         }
+
+        // Simply attach the existing, populated panel back to the layout
         mainLayout.setRight(poiPanel);
     }
 
     private void setupPoiSearchUI() {
         poiPanel.getChildren().clear();
-        poiPanel.getChildren().add(createPanelHeader("Nearby Places"));
+        poiPanel.getChildren().add(createPanelHeader("Search Uzbekistan"));
 
         searchBox = new TextField();
-        searchBox.setPromptText("Filter results (e.g. cafe)...");
+        searchBox.setPromptText("Search (e.g. Bukhara, Hilton, Cafe)...");
+
+        // Live Search Listener
+        searchBox.textProperty().addListener((observable, oldValue, newValue) -> {
+            searchDebounce.setOnFinished(e -> performGlobalSearch(newValue));
+            searchDebounce.playFromStart();
+        });
 
         poiAccordion = new Accordion();
-
         ScrollPane poiScrollPane = new ScrollPane(poiAccordion);
         poiScrollPane.setFitToWidth(true);
         poiScrollPane.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
         VBox.setVgrow(poiScrollPane, Priority.ALWAYS);
 
         poiPanel.getChildren().addAll(searchBox, poiScrollPane);
+    }
+
+    private void performGlobalSearch(String query) {
+        if (poiPersistenceManager == null || query == null || query.trim().length() < 2) {
+            Platform.runLater(() -> poiAccordion.getPanes().clear());
+            return;
+        }
+
+        Task<List<PointOfInterest>> searchTask = new Task<>() {
+            @Override
+            protected List<PointOfInterest> call() {
+                // 1. Define the Bounding Box for Uzbekistan
+                // (Min Lat, Min Lon, Max Lat, Max Lon)
+                BoundingBox uzbekistanBounds = new BoundingBox(37.0, 55.0, 46.5, 74.0);
+
+                // 2. Create a search pattern.
+                // In Mapsforge POI files, 'name' is the standard tag key for the title of a place.
+                List<Tag> patterns = new java.util.ArrayList<>();
+                patterns.add(new Tag("name", query));
+
+                // 3. Use findInRect to search the whole country
+                Collection<PointOfInterest> results = poiPersistenceManager.findInRect(
+                        uzbekistanBounds,
+                        null,      // No category filter
+                        patterns,  // This is our text search pattern
+                        null,      // No specific sort order
+                        50,        // Limit to 50 results
+                        true       // Resolve categories
+                );
+
+                return new java.util.ArrayList<>(results);
+            }
+        };
+
+        searchTask.setOnSucceeded(e -> updateResultsList(searchTask.getValue()));
+        searchTask.setOnFailed(e -> searchTask.getException().printStackTrace());
+        new Thread(searchTask).start();
     }
 
     @Override
