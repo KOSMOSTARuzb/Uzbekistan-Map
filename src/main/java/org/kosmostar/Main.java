@@ -10,11 +10,13 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
 
 import org.mapsforge.core.model.LatLong;
+import org.mapsforge.core.model.Tag;
 import org.mapsforge.map.awt.graphics.AwtGraphicFactory;
 import org.mapsforge.map.awt.util.AwtUtil;
 import org.mapsforge.map.awt.view.MapView;
@@ -25,14 +27,16 @@ import org.mapsforge.map.reader.MapFile;
 import org.mapsforge.map.rendertheme.ExternalRenderTheme;
 import org.mapsforge.map.util.MapViewProjection;
 import org.mapsforge.poi.storage.PoiPersistenceManager;
+import org.mapsforge.poi.storage.PointOfInterest;
 
 import javax.swing.*;
-import java.awt.*;
+import java.awt.BorderLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.io.*;
+import java.util.List;
 
 public class Main extends Application {
 
@@ -48,7 +52,8 @@ public class Main extends Application {
     private MapView mapView;
     private Stage mainStage;
     private VBox poiPanel;
-    private Label poiDetailsLabel;
+    private Accordion poiAccordion;
+    private ScrollPane poiScrollPane;
 
     private PoiPersistenceManager poiPersistenceManager;
     private org.mapsforge.poi.storage.PoiCategoryManager poiCategoryManager;
@@ -290,55 +295,43 @@ public class Main extends Application {
      * Handle the map click interactions (Query POI db here)
      */
     private void handleMapClick(LatLong location) {
-        if (poiPersistenceManager == null) {
-            if (poiDetailsLabel != null) poiDetailsLabel.setText("POI Database not initialized.");
-            return;
-        }
+        if (poiPersistenceManager == null) return;
 
-        // Search parameters
         int searchRadiusMeters = 500;
-        int resultLimit = 50;
+        int resultLimit = 30;
 
-        Task<String> queryTask = new Task<>() {
+        // Task now returns a List of POIs
+        Task<List<org.mapsforge.poi.storage.PointOfInterest>> queryTask = new Task<>() {
             @Override
-            protected String call() {
-                StringBuilder results = new StringBuilder();
+            protected List<org.mapsforge.poi.storage.PointOfInterest> call() {
                 String filterText = searchBox.getText().toLowerCase();
-
                 java.util.Collection<org.mapsforge.poi.storage.PointOfInterest> pois =
                         poiPersistenceManager.findNearPosition(
-                                location,           // point (center of search)
-                                searchRadiusMeters, // distance (in meters)
-                                null,               // filter (PoiCategoryFilter - null for all)
-                                null,               // patterns (List<Tag> - null for all)
-                                location,           // orderBy (Sort results relative to click location)
-                                resultLimit,        // limit
-                                true                // findCategories
+                                location, searchRadiusMeters, null, null, location, resultLimit, true
                         );
 
-                int count = 0;
-                for (org.mapsforge.poi.storage.PointOfInterest poi : pois) {
-                    String name = poi.getName() != null ? poi.getName() : "Unnamed Place";
-
-                    // Filter based on user search text
-                    if (!filterText.isEmpty() && !name.toLowerCase().contains(filterText)) {
-                        continue;
-                    }
-
-                    results.append("📍 ").append(name).append("\n");
-                    count++;
-                    if (count >= 12) break; // Display limit for the panel
-                }
-
-                if (count == 0) {
-                    return String.format("No POIs found within %dm.", searchRadiusMeters);
-                } else {
-                    return String.format("Near (within %dm):\n", searchRadiusMeters) + results.toString();
-                }
+                // Filter them in the background thread
+                return pois.stream()
+                        .filter(p -> p.getName() != null && p.getName().toLowerCase().contains(filterText))
+                        .collect(java.util.stream.Collectors.toList());
             }
         };
 
-        queryTask.setOnSucceeded(e -> poiDetailsLabel.setText(queryTask.getValue()));
+        queryTask.setOnSucceeded(e -> {
+            List<PointOfInterest> results = queryTask.getValue();
+            poiAccordion.getPanes().clear();
+
+            if (results.isEmpty()) {
+                TitledPane empty = new TitledPane("No results found", new Label("Try clicking elsewhere."));
+                poiAccordion.getPanes().add(empty);
+                return;
+            }
+
+            for (org.mapsforge.poi.storage.PointOfInterest poi : results) {
+                poiAccordion.getPanes().add(createPoiPane(poi));
+            }
+        });
+
         new Thread(queryTask).start();
     }
 
@@ -369,18 +362,65 @@ public class Main extends Application {
         poiPanel.getChildren().add(enablePoiBtn);
     }
 
+    private TitledPane createPoiPane(org.mapsforge.poi.storage.PointOfInterest poi) {
+        VBox content = new VBox(5);
+        content.setPadding(new Insets(10));
+
+        // 1. Add Category Info
+        if (poi.getCategory() != null) {
+            Label catLabel = new Label("Category: " + poi.getCategory().getTitle());
+            catLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #2c3e50;");
+            content.getChildren().add(catLabel);
+        }
+
+        // 2. Add all Tags (The "hidden" data)
+        GridPane detailsGrid = new GridPane();
+        detailsGrid.setHgap(10);
+        detailsGrid.setVgap(3);
+
+        int row = 0;
+        for (org.mapsforge.core.model.Tag tag : poi.getTags()) {
+            Label key = new Label(tag.key + ":");
+            key.setStyle("-fx-font-weight: bold; -fx-text-fill: #7f8c8d;");
+            Label val = new Label(tag.value);
+            val.setStyle("-fx-text-fill: #111111;");
+            val.setWrapText(true);
+
+            detailsGrid.add(key, 0, row);
+            detailsGrid.add(val, 1, row);
+            row++;
+        }
+
+        if (row == 0) {
+            content.getChildren().add(new Label("No extra data available."));
+        } else {
+            content.getChildren().add(detailsGrid);
+        }
+
+        // 3. Create the Pane
+        String title = (poi.getName() != null) ? poi.getName() : "Unnamed Place";
+        TitledPane pane = new TitledPane(title, content);
+        pane.setAnimated(true);
+
+        return pane;
+    }
+
     private void setupPoiSearchUI() {
         poiPanel.getChildren().clear();
+        poiPanel.setPrefWidth(300); // Make it slightly wider for details
+        poiPanel.setMaxHeight(500); // Allow it to be taller
 
         searchBox = new TextField();
         searchBox.setPromptText("Filter results (e.g. cafe)...");
 
-        poiDetailsLabel = new Label("Click on the map to find nearby places.");
-        poiDetailsLabel.setMinHeight(Region.USE_PREF_SIZE);
-        VBox.setVgrow(poiDetailsLabel, Priority.ALWAYS);
-        poiDetailsLabel.setWrapText(true);
+        poiAccordion = new Accordion();
 
-        poiPanel.getChildren().addAll(new Label("Search & Info:"), searchBox, poiDetailsLabel);
+        poiScrollPane = new ScrollPane(poiAccordion);
+        poiScrollPane.setFitToWidth(true);
+        poiScrollPane.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+        VBox.setVgrow(poiScrollPane, Priority.ALWAYS);
+
+        poiPanel.getChildren().addAll(new Label("Nearby Places:"), searchBox, poiScrollPane);
     }
 
     @Override
