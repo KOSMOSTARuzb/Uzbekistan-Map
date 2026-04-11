@@ -68,6 +68,7 @@ public class Main extends Application {
     private PoiCategoryManager poiCategoryManager;
 
     private TextField searchBox;
+    private ToggleButton globalToggle;
 
     public static void main(String[] args) {
         launch(args);
@@ -282,6 +283,14 @@ public class Main extends Application {
         }
 
         mapView.addMouseWheelListener(this::handleMouseWheelEvent);
+
+        mapView.getModel().mapViewPosition.addObserver(() -> {
+            if (globalToggle != null && !globalToggle.isSelected() && !searchBox.getText().isEmpty()) {
+                Platform.runLater(() -> {
+                    searchDebounce.playFromStart();
+                });
+            }
+        });
 
         JPanel jPanel = new JPanel(new BorderLayout());
         jPanel.add(mapView, BorderLayout.CENTER);
@@ -500,14 +509,31 @@ public class Main extends Application {
 
     private void setupPoiSearchUI() {
         poiPanel.getChildren().clear();
-        poiPanel.getChildren().add(createPanelHeader("Search Uzbekistan"));
+        poiPanel.getChildren().add(createPanelHeader("Search Places"));
 
+        // Create the search box
         searchBox = new TextField();
-        searchBox.setPromptText("Search (e.g. Bukhara, Hilton, Cafe)...");
+        searchBox.setPromptText("Search (e.g. Cafe)...");
+        HBox.setHgrow(searchBox, Priority.ALWAYS);
+
+        // Create the Global toggle
+        globalToggle = new ToggleButton("Global");
+        globalToggle.setSelected(true); // Default to global
+        globalToggle.setStyle("-fx-cursor: hand; -fx-font-weight: bold;");
+
+        // Refresh search immediately when toggle is flipped
+        globalToggle.selectedProperty().addListener((obs, oldVal, newVal) -> {
+            globalToggle.setText(newVal ? "Global" : "Local");
+            performSearch(searchBox.getText());
+        });
+
+        // Layout for the search row
+        HBox searchRow = new HBox(5, searchBox, globalToggle);
+        searchRow.setAlignment(Pos.CENTER_LEFT);
 
         // Live Search Listener
         searchBox.textProperty().addListener((observable, oldValue, newValue) -> {
-            searchDebounce.setOnFinished(e -> performGlobalSearch(newValue));
+            searchDebounce.setOnFinished(e -> performSearch(newValue));
             searchDebounce.playFromStart();
         });
 
@@ -517,35 +543,57 @@ public class Main extends Application {
         poiScrollPane.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
         VBox.setVgrow(poiScrollPane, Priority.ALWAYS);
 
-        poiPanel.getChildren().addAll(searchBox, poiScrollPane);
+        poiPanel.getChildren().addAll(searchRow, poiScrollPane);
     }
 
-    private void performGlobalSearch(String query) {
+    private void performSearch(String query) {
         if (poiPersistenceManager == null || query == null || query.trim().length() < 2) {
             Platform.runLater(() -> poiAccordion.getPanes().clear());
             return;
         }
 
+        // Capture the current map viewport before starting the background task
+        // We do this because accessing mapView (Swing) from a background thread
+        // is safer if we grab the data point first.
+        final BoundingBox searchArea;
+        if (globalToggle.isSelected()) {
+            // Entire Uzbekistan
+            searchArea = new BoundingBox(37.0, 55.0, 46.5, 74.0);
+        } else {
+            // MANUALLY CALCULATE VISIBLE BOX
+            MapViewProjection proj = mapView.getMapViewProjection();
+
+            // Get coordinates of the corners
+            LatLong topLeft = proj.fromPixels(0, 0);
+            LatLong bottomRight = proj.fromPixels(mapView.getWidth(), mapView.getHeight());
+
+            if (topLeft != null && bottomRight != null) {
+                // BoundingBox constructor: minLat, minLon, maxLat, maxLon
+                searchArea = new BoundingBox(
+                        bottomRight.latitude,  // minLat
+                        topLeft.longitude,     // minLon
+                        topLeft.latitude,      // maxLat
+                        bottomRight.longitude  // maxLon
+                );
+            } else {
+                // Fallback to global if map is not yet rendered or dimensions are 0
+                searchArea = new BoundingBox(37.0, 55.0, 46.5, 74.0);
+            }
+        }
+
         Task<List<PointOfInterest>> searchTask = new Task<>() {
             @Override
             protected List<PointOfInterest> call() {
-                // 1. Define the Bounding Box for Uzbekistan
-                // (Min Lat, Min Lon, Max Lat, Max Lon)
-                BoundingBox uzbekistanBounds = new BoundingBox(37.0, 55.0, 46.5, 74.0);
-
-                // 2. Create a search pattern.
-                // In Mapsforge POI files, 'name' is the standard tag key for the title of a place.
                 List<Tag> patterns = new java.util.ArrayList<>();
                 patterns.add(new Tag("name", query));
 
-                // 3. Use findInRect to search the whole country
                 Collection<PointOfInterest> results = poiPersistenceManager.findInRect(
-                        uzbekistanBounds,
-                        null,      // No category filter
-                        patterns,  // This is our text search pattern
-                        null,      // No specific sort order
-                        50,        // Limit to 50 results
-                        true       // Resolve categories
+                        searchArea,
+                        null,
+                        patterns,
+                        null,
+                        50,
+                        true
                 );
 
                 return new java.util.ArrayList<>(results);
