@@ -51,7 +51,7 @@ public class Main extends Application {
     private final String POI_URL = "https://ftp.gwdg.de/pub/misc/openstreetmap/openandromaps/pois/mapsforge/asia/Uzbekistan.Poi.zip";
     private final String THEME_URL = "https://www.openandromaps.org/wp-content/users/tobias/Elevate.zip";
 
-    private final File dataDir = new File("map_data");
+    private final File dataDir = new File(System.getProperty("user.home"), ".uzbekistan_map_data");
     private File mapFile;
     private File poiFile;
     private final File themeFile = new File(dataDir, "Elevate.xml");

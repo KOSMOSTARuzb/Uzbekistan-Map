@@ -67,6 +67,9 @@
                 <version>0.0.8</version>
                 <configuration>
                     <mainClass>org.kosmostar.Main</mainClass>
+                    <launcher>UzbekistanMap</launcher>
+                    <jlinkImageName>uzmap</jlinkImageName>
+                    <jlinkZipName>uzmap-dist</jlinkZipName>
                 </configuration>
             </plugin>
         </plugins>
