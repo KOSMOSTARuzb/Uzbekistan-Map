@@ -8,7 +8,9 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
 
@@ -50,6 +52,8 @@ public class Main extends Application {
 
     private MapView mapView;
     private Stage mainStage;
+    private VBox poiPanel;
+    private Label poiDetailsLabel;
 
     public static void main(String[] args) {
         launch(args);
@@ -63,7 +67,7 @@ public class Main extends Application {
         // Check if data directory and files exist
         findLocalFiles();
 
-        if (mapFile == null || poiFile == null || !themeFile.exists()) {
+        if (mapFile == null || !themeFile.exists()) {
             showDownloadUI();
         } else {
             showMapUI();
@@ -109,27 +113,19 @@ public class Main extends Application {
         progressLabel.textProperty().bind(mapTask.messageProperty());
 
         mapTask.setOnSucceeded(e -> {
-            // 2. Download POI
-            infoLabel.setText("Downloading POI Database...");
-            DownloadTask poiTask = new DownloadTask(POI_URL, dataDir);
-            progressBar.progressProperty().bind(poiTask.progressProperty());
-            progressLabel.textProperty().bind(poiTask.messageProperty());
+            infoLabel.setText("Downloading Elevate Map Theme...");
+            DownloadTask themeTask = new DownloadTask(THEME_URL, dataDir);
+            progressBar.progressProperty().unbind();
+            progressLabel.textProperty().unbind();
 
-            poiTask.setOnSucceeded(e2 -> {
-                // 3. Download Elevate Theme
-                infoLabel.setText("Downloading Elevate Map Theme...");
-                DownloadTask themeTask = new DownloadTask(THEME_URL, dataDir);
-                progressBar.progressProperty().bind(themeTask.progressProperty());
-                progressLabel.textProperty().bind(themeTask.messageProperty());
+            progressBar.progressProperty().bind(themeTask.progressProperty());
+            progressLabel.textProperty().bind(themeTask.messageProperty());
 
-                themeTask.setOnSucceeded(e3 -> {
-                    findLocalFiles();
-                    showMapUI();
-                });
-                new Thread(themeTask).start();
+            themeTask.setOnSucceeded(e3 -> {
+                findLocalFiles();
+                showMapUI();
             });
-
-            new Thread(poiTask).start();
+            new Thread(themeTask).start();
         });
 
         new Thread(mapTask).start();
@@ -142,7 +138,26 @@ public class Main extends Application {
         AwtGraphicFactory.INSTANCE.getClass(); // Init AWT Graphic Factory
         StackPane root = new StackPane();
         SwingNode swingNode = new SwingNode();
-        root.getChildren().add(swingNode);
+
+        // --- NEW PANEL SETUP ---
+        poiPanel = new VBox(10);
+        poiPanel.setPadding(new Insets(15));
+        poiPanel.setStyle("-fx-background-color: rgba(255, 255, 255, 0.9); -fx-background-radius: 8; -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.4), 10, 0, 0, 0);");
+        poiPanel.setMaxSize(250, 150);
+
+        // Pin the panel to the Top Right
+        StackPane.setAlignment(poiPanel, Pos.TOP_RIGHT);
+        StackPane.setMargin(poiPanel, new Insets(20));
+
+        // Initialize panel content based on POI availability
+        if (poiFile == null) {
+            setupPoiDownloadButton();
+        } else {
+            setupPoiSearchUI();
+        }
+
+        // Add the map first, then the panel so it floats on top
+        root.getChildren().addAll(swingNode, poiPanel);
 
         SwingUtilities.invokeLater(() -> createMapContent(swingNode));
 
@@ -210,23 +225,52 @@ public class Main extends Application {
      * Handle the map click interactions (Query POI db here)
      */
     private void handleMapClick(LatLong location) {
-        // Here you would run a spatial SQLite query on your poiFile (.db)
-        // using the org.xerial.sqlitejdbc driver.
         System.out.println("Clicked on Map at: " + location.latitude + ", " + location.longitude);
 
-        /* EXAMPLE OF CONNECTING TO THE POI DATABASE:
-         * try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + poiFile.getAbsolutePath());
-         *      Statement stmt = conn.createStatement()) {
-         *      // Run standard SQL on OpenAndroMaps schema
-         * } catch(Exception e) { e.printStackTrace(); }
-         */
+        if (poiFile != null && poiDetailsLabel != null) {
+            // Update the side panel dynamically
+            poiDetailsLabel.setText(String.format("Location Selected:\nLat: %.5f\nLon: %.5f\n\n(Ready for SQLite spatial query)",
+                    location.latitude, location.longitude));
+        }
+    }
 
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Location Selected");
-        alert.setHeaderText("Searching nearby POIs...");
-        alert.setContentText(String.format("Latitude: %.5f\nLongitude: %.5f",
-                location.latitude, location.longitude));
-        alert.show();
+    private void setupPoiDownloadButton() {
+        poiPanel.getChildren().clear();
+        Button enablePoiBtn = new Button("Initialize POI Interaction");
+        enablePoiBtn.setStyle("-fx-base: #3498db; -fx-text-fill: white; -fx-font-weight: bold;");
+
+        enablePoiBtn.setOnAction(e -> {
+            poiPanel.getChildren().clear();
+            Label progressLabel = new Label("Downloading POI Database...");
+            ProgressBar progressBar = new ProgressBar(0);
+            progressBar.setPrefWidth(220);
+            poiPanel.getChildren().addAll(progressLabel, progressBar);
+
+            // Download asynchronously while user explores the map
+            DownloadTask poiTask = new DownloadTask(POI_URL, dataDir);
+            progressBar.progressProperty().bind(poiTask.progressProperty());
+            progressLabel.textProperty().bind(poiTask.messageProperty());
+
+            poiTask.setOnSucceeded(evt -> {
+                findLocalFiles(); // Register the newly downloaded .poi file
+                setupPoiSearchUI(); // Switch UI to Search mode
+            });
+            new Thread(poiTask).start();
+        });
+
+        poiPanel.getChildren().add(enablePoiBtn);
+    }
+
+    private void setupPoiSearchUI() {
+        poiPanel.getChildren().clear();
+
+        TextField searchBox = new TextField();
+        searchBox.setPromptText("Search POI...");
+
+        poiDetailsLabel = new Label("POI Database ready.\nClick on the map to query locations.");
+        poiDetailsLabel.setWrapText(true);
+
+        poiPanel.getChildren().addAll(searchBox, poiDetailsLabel);
     }
 
     @Override
