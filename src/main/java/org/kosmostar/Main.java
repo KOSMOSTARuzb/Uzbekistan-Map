@@ -54,7 +54,7 @@ public class Main extends Application {
     private final File dataDir = new File("map_data");
     private File mapFile;
     private File poiFile;
-    private final File themeFile = new File(dataDir, "Elevate.xml"); // The main Elevate theme file
+    private final File themeFile = new File(dataDir, "Elevate.xml");
 
     private PauseTransition searchDebounce = new PauseTransition(Duration.millis(300));
 
@@ -79,7 +79,6 @@ public class Main extends Application {
         this.mainStage = stage;
         stage.setTitle("Uzbekistan Interactive Map");
 
-        // Check if data directory and files exist
         findLocalFiles();
 
         if (mapFile == null || !themeFile.exists()) {
@@ -89,9 +88,6 @@ public class Main extends Application {
         }
     }
 
-    /**
-     * Searches the map_data folder for the extracted .map and .poi / .db files
-     */
     private void findLocalFiles() {
         if (!dataDir.exists()) return;
 
@@ -115,9 +111,6 @@ public class Main extends Application {
         }
     }
 
-    /**
-     * Renders the Download UI on first launch
-     */
     private void showDownloadUI() {
         VBox layout = new VBox(15);
         layout.setAlignment(Pos.CENTER);
@@ -133,7 +126,6 @@ public class Main extends Application {
         mainStage.setScene(scene);
         mainStage.show();
 
-        // 1. Download Map
         DownloadTask mapTask = new DownloadTask(MAP_URL, dataDir);
         progressBar.progressProperty().bind(mapTask.progressProperty());
         progressLabel.textProperty().bind(mapTask.messageProperty());
@@ -157,9 +149,6 @@ public class Main extends Application {
         new Thread(mapTask).start();
     }
 
-    /**
-     * Renders the Interactive Map UI
-     */
     private void showMapUI() {
         AwtGraphicFactory.INSTANCE.getClass();
 
@@ -168,20 +157,17 @@ public class Main extends Application {
         SwingNode swingNode = new SwingNode();
         mainLayout.setCenter(swingNode);
 
-        // 1. Prepare Sidebar container
         poiPanel = new VBox(15);
         poiPanel.setPadding(new Insets(15));
         poiPanel.setPrefWidth(380);
         poiPanel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #bdc3c7; -fx-border-width: 0 0 0 2; -fx-padding: 15;");
         makeResizable(poiPanel);
 
-        // 2. Floating Action Button
         Button actionButton = new Button();
         actionButton.setStyle("-fx-background-color: #2c3e50; -fx-text-fill: white; -fx-font-weight: bold; " +
                 "-fx-background-radius: 20; -fx-padding: 10 20; -fx-cursor: hand; " +
                 "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 10, 0, 0, 0);");
 
-        // BINDING: Hide floating button if sidebar is currently in the layout
         actionButton.visibleProperty().bind(mainLayout.rightProperty().isNull());
 
         actionButton.setText("Show Places Panel");
@@ -203,9 +189,7 @@ public class Main extends Application {
     }
 
     private void makeResizable(Region region) {
-        // The 'handle' is a thin 5-pixel wide area on the left edge
         region.setOnMouseMoved(e -> {
-            // If the mouse is within the left 5 pixels, show the resize cursor
             if (e.getX() < 10) {
                 region.setCursor(Cursor.H_RESIZE);
             } else {
@@ -215,9 +199,6 @@ public class Main extends Application {
 
         region.setOnMouseDragged(e -> {
             if (region.getCursor() == Cursor.H_RESIZE) {
-                // Calculate how much the user dragged
-                // Since it's on the right side, dragging left (negative X)
-                // increases the width.
                 double newWidth = region.getWidth() - e.getX();
 
                 double windowWidth = region.getScene().getWidth();
@@ -229,9 +210,6 @@ public class Main extends Application {
         });
     }
 
-    /**
-     * Sets up Mapsforge inside the Swing Node
-     */
     private void createMapContent(SwingNode swingNode) {
         mapView = new MapView();
         mapView.getMapScaleBar().setVisible(true);
@@ -252,7 +230,6 @@ public class Main extends Application {
                 AwtGraphicFactory.INSTANCE
         );
 
-        // --- APPLIED EXTERNAL ELEVATE THEME HERE ---
         try {
             tileRendererLayer.setXmlRenderTheme(new ExternalRenderTheme(themeFile));
         } catch (FileNotFoundException e) {
@@ -262,18 +239,14 @@ public class Main extends Application {
 
         mapView.getLayerManager().getLayers().add(tileRendererLayer);
 
-        // Center Map on Tashkent
         mapView.getModel().mapViewPosition.setCenter(new LatLong(41.2995, 69.2401));
         mapView.getModel().mapViewPosition.setZoomLevel((byte) 12);
 
-        // --- POI INTERACTION LOGIC ---
         mapView.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                // Convert screen click into GPS Coordinates
                 LatLong tapLocation = mapView.getMapViewProjection().fromPixels(e.getX(), e.getY());
 
-                // Switch back to JavaFX thread to show UI interactions
                 Platform.runLater(() -> handleMapClick(tapLocation));
             }
         });
@@ -303,14 +276,12 @@ public class Main extends Application {
         byte currentZoom = mapView.getModel().mapViewPosition.getZoomLevel();
         final byte newZoom = (byte) (currentZoom + zoomDelta);
 
-        // Prevent zooming past limits (adjust to your map's max zoom)
         if (newZoom < 0 || newZoom > 22) return;
 
         MapViewProjection proj = mapView.getMapViewProjection();
         LatLong mouseLatLong = proj.fromPixels(e.getX(), e.getY());
         if (mouseLatLong == null) return;
 
-        // --- I DID THE MATH FOR YOU ---
         int tileSize = mapView.getModel().displayModel.getTileSize();
         long newMapSize = org.mapsforge.core.util.MercatorProjection.getMapSize(newZoom, tileSize);
 
@@ -324,16 +295,11 @@ public class Main extends Application {
                 org.mapsforge.core.util.MercatorProjection.pixelYToLatitude(centerWorldPixelY, newMapSize),
                 org.mapsforge.core.util.MercatorProjection.pixelXToLongitude(centerWorldPixelX, newMapSize)
         );
-        // ------------------------------
 
-        // 1. Set the Pivot point so Mapsforge animates visually toward the mouse
         mapView.getModel().mapViewPosition.setPivot(mouseLatLong);
 
-        // 2. Trigger the native Mapsforge zoom animation
         mapView.getModel().mapViewPosition.zoom(zoomDelta, true);
 
-        // 3. Prevent the "snap-back" by locking in our calculated center
-        // exactly when the Mapsforge animation finishes (250 milliseconds).
         Timer timer = new Timer(250, new java.awt.event.ActionListener() {
             @Override
             public void actionPerformed(java.awt.event.ActionEvent evt) {
@@ -346,16 +312,12 @@ public class Main extends Application {
         timer.start();
     }
 
-    /**
-     * Handle the map click interactions (Query POI db here)
-     */
     private void handleMapClick(LatLong location) {
         if (poiPersistenceManager == null || mainLayout.getRight() == null) return;
 
         Task<List<PointOfInterest>> queryTask = new Task<>() {
             @Override
             protected List<PointOfInterest> call() {
-                // Search 500 meters around the click, no text pattern (null)
                 Collection<PointOfInterest> pois = poiPersistenceManager.findNearPosition(
                         location, 500, null, null, location, 30, true
                 );
@@ -367,9 +329,6 @@ public class Main extends Application {
         new Thread(queryTask).start();
     }
 
-    /**
-     * Reusable method to fill the accordion with POI data
-     */
     private void updateResultsList(List<PointOfInterest> results) {
         poiAccordion.getPanes().clear();
 
@@ -380,7 +339,6 @@ public class Main extends Application {
         }
 
         for (PointOfInterest poi : results) {
-            // Just add the pane; the button inside will handle the movement
             poiAccordion.getPanes().add(createPoiPane(poi));
         }
     }
@@ -416,10 +374,9 @@ public class Main extends Application {
     }
 
     private TitledPane createPoiPane(PointOfInterest poi) {
-        VBox content = new VBox(12); // Slightly more spacing
+        VBox content = new VBox(12);
         content.setPadding(new Insets(10));
 
-        // 1. Category Label
         if (poi.getCategory() != null && poi.getCategory().getTitle() != null) {
             String catTitle = poi.getCategory().getTitle();
             Label catLabel = new Label("Category: " + (catTitle.contains("/") ? catTitle.split("/")[0] : catTitle));
@@ -427,7 +384,6 @@ public class Main extends Application {
             content.getChildren().add(catLabel);
         }
 
-        // 2. Details Grid
         GridPane detailsGrid = new GridPane();
         detailsGrid.setHgap(10);
         detailsGrid.setVgap(6);
@@ -450,20 +406,15 @@ public class Main extends Application {
 
         content.getChildren().add(detailsGrid);
 
-        // 3. THE "FLY TO" BUTTON
         Button flyButton = new Button("📍 Show on Map");
-//        flyButton.setMaxWidth(Double.MAX_VALUE); // Fill width
         flyButton.setStyle("-fx-background-color: #3498db; -fx-text-fill: white; " +
                 "-fx-font-weight: bold; -fx-padding: 8; -fx-background-radius: 5; -fx-cursor: hand;");
 
-        // Hover effect
         flyButton.setOnMouseEntered(e -> flyButton.setStyle(flyButton.getStyle() + "-fx-background-color: #2980b9;"));
         flyButton.setOnMouseExited(e -> flyButton.setStyle(flyButton.getStyle() + "-fx-background-color: #3498db;"));
 
         flyButton.setOnAction(e -> {
-            // Center the map on this specific POI
             mapView.getModel().mapViewPosition.setCenter(poi.getLatLong());
-            // Optional: Zoom in close enough to see the street level
             mapView.getModel().mapViewPosition.setZoomLevel((byte) 16);
         });
 
@@ -481,20 +432,18 @@ public class Main extends Application {
         Label titleLabel = new Label(title);
         titleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;");
 
-        // Spacer to push the close button to the far right
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Button panelCloseButton = new Button("✕"); // Using a Unicode 'X'
+        Button panelCloseButton = new Button("✕");
         panelCloseButton.setStyle("-fx-background-color: transparent; -fx-text-fill: #7f8c8d; -fx-font-size: 18px; -fx-font-weight: bold; -fx-cursor: hand;");
-        panelCloseButton.setOnAction(e -> mainLayout.setRight(null)); // Closes the panel
+        panelCloseButton.setOnAction(e -> mainLayout.setRight(null));
 
         header.getChildren().addAll(titleLabel, spacer, panelCloseButton);
         return header;
     }
 
     private void handleOpenSidebar() {
-        // Only build the UI if it's the very first time opening it
         if (poiPanel.getChildren().isEmpty()) {
             if (poiFile == null) {
                 setupPoiDownloadButton();
@@ -503,7 +452,6 @@ public class Main extends Application {
             }
         }
 
-        // Simply attach the existing, populated panel back to the layout
         mainLayout.setRight(poiPanel);
     }
 
@@ -511,27 +459,22 @@ public class Main extends Application {
         poiPanel.getChildren().clear();
         poiPanel.getChildren().add(createPanelHeader("Search Places"));
 
-        // Create the search box
         searchBox = new TextField();
         searchBox.setPromptText("Search (e.g. Cafe)...");
         HBox.setHgrow(searchBox, Priority.ALWAYS);
 
-        // Create the Global toggle
         globalToggle = new ToggleButton("Global");
-        globalToggle.setSelected(true); // Default to global
+        globalToggle.setSelected(true);
         globalToggle.setStyle("-fx-cursor: hand; -fx-font-weight: bold;");
 
-        // Refresh search immediately when toggle is flipped
         globalToggle.selectedProperty().addListener((obs, oldVal, newVal) -> {
             globalToggle.setText(newVal ? "Global" : "Local");
             performSearch(searchBox.getText());
         });
 
-        // Layout for the search row
         HBox searchRow = new HBox(5, searchBox, globalToggle);
         searchRow.setAlignment(Pos.CENTER_LEFT);
 
-        // Live Search Listener
         searchBox.textProperty().addListener((observable, oldValue, newValue) -> {
             searchDebounce.setOnFinished(e -> performSearch(newValue));
             searchDebounce.playFromStart();
@@ -552,31 +495,23 @@ public class Main extends Application {
             return;
         }
 
-        // Capture the current map viewport before starting the background task
-        // We do this because accessing mapView (Swing) from a background thread
-        // is safer if we grab the data point first.
         final BoundingBox searchArea;
         if (globalToggle.isSelected()) {
-            // Entire Uzbekistan
             searchArea = new BoundingBox(37.0, 55.0, 46.5, 74.0);
         } else {
-            // MANUALLY CALCULATE VISIBLE BOX
             MapViewProjection proj = mapView.getMapViewProjection();
 
-            // Get coordinates of the corners
             LatLong topLeft = proj.fromPixels(0, 0);
             LatLong bottomRight = proj.fromPixels(mapView.getWidth(), mapView.getHeight());
 
             if (topLeft != null && bottomRight != null) {
-                // BoundingBox constructor: minLat, minLon, maxLat, maxLon
                 searchArea = new BoundingBox(
-                        bottomRight.latitude,  // minLat
-                        topLeft.longitude,     // minLon
-                        topLeft.latitude,      // maxLat
-                        bottomRight.longitude  // maxLon
+                        bottomRight.latitude,
+                        topLeft.longitude,
+                        topLeft.latitude,
+                        bottomRight.longitude
                 );
             } else {
-                // Fallback to global if map is not yet rendered or dimensions are 0
                 searchArea = new BoundingBox(37.0, 55.0, 46.5, 74.0);
             }
         }

@@ -49,7 +49,6 @@ public class DownloadTask extends Task<Void> {
                 if (entry.isDirectory()) {
                     unzippedFile.mkdirs();
                 } else {
-                    // Ensure the parent directory for the resource icon exists
                     unzippedFile.getParentFile().mkdirs();
                     try (FileOutputStream fos = new FileOutputStream(unzippedFile)) {
                         zis.transferTo(fos);
