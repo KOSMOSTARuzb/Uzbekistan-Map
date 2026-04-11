@@ -65,7 +65,6 @@ public class Main extends Application {
     private BorderPane mainLayout;
 
     private PoiPersistenceManager poiPersistenceManager;
-    private PoiCategoryManager poiCategoryManager;
 
     private TextField searchBox;
     private ToggleButton globalToggle;
@@ -101,7 +100,6 @@ public class Main extends Application {
                         try {
                             poiPersistenceManager = org.mapsforge.poi.awt.storage.AwtPoiPersistenceManagerFactory
                                     .getPoiPersistenceManager(poiFile.getPath(), true);
-                            poiCategoryManager = poiPersistenceManager.getCategoryManager();
                         } catch (Exception ex) {
                             System.err.println("Could not open POI file: " + ex.getMessage());
                         }
