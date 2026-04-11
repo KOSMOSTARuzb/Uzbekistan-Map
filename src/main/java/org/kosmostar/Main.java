@@ -27,6 +27,7 @@ import org.mapsforge.map.layer.renderer.TileRendererLayer;
 import org.mapsforge.map.reader.MapFile;
 import org.mapsforge.map.rendertheme.ExternalRenderTheme;
 import org.mapsforge.map.util.MapViewProjection;
+import org.mapsforge.poi.storage.PoiCategoryManager;
 import org.mapsforge.poi.storage.PoiPersistenceManager;
 import org.mapsforge.poi.storage.PointOfInterest;
 
@@ -57,7 +58,7 @@ public class Main extends Application {
     private BorderPane mainLayout;
 
     private PoiPersistenceManager poiPersistenceManager;
-    private org.mapsforge.poi.storage.PoiCategoryManager poiCategoryManager;
+    private PoiCategoryManager poiCategoryManager;
 
     private TextField searchBox;
 
@@ -381,7 +382,7 @@ public class Main extends Application {
 
         // 1. Add Category Info
         if (poi.getCategory() != null) {
-            Label catLabel = new Label("Category: " + poi.getCategory().getTitle());
+            Label catLabel = new Label("Category: " + poi.getCategory().getTitle().split("/")[0]);
             catLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #2c3e50;");
             content.getChildren().add(catLabel);
         }
@@ -393,7 +394,7 @@ public class Main extends Application {
 
         // --- FORCE COLUMN SIZING ---
         ColumnConstraints col1 = new ColumnConstraints();
-        col1.setMinWidth(80); // Fixed width for keys (e.g. "Cuisine:")
+        col1.setMinWidth(100); // Fixed width for keys (e.g. "Cuisine:")
 
         ColumnConstraints col2 = new ColumnConstraints();
         col2.setHgrow(Priority.ALWAYS); // Value column takes the rest of the space
