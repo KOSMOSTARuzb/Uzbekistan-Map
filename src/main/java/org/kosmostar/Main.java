@@ -7,6 +7,7 @@ import javafx.concurrent.Task;
 import javafx.embed.swing.SwingNode;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.Button;
@@ -170,7 +171,8 @@ public class Main extends Application {
         poiPanel = new VBox(15);
         poiPanel.setPadding(new Insets(15));
         poiPanel.setPrefWidth(380);
-        poiPanel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #bdc3c7; -fx-border-width: 0 0 0 1;");
+        poiPanel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #bdc3c7; -fx-border-width: 0 0 0 2; -fx-padding: 15;");
+        makeResizable(poiPanel);
 
         // 2. Floating Action Button
         Button actionButton = new Button();
@@ -197,6 +199,33 @@ public class Main extends Application {
         Scene scene = new Scene(root, 1200, 800);
         mainStage.setScene(scene);
         mainStage.show();
+    }
+
+    private void makeResizable(Region region) {
+        // The 'handle' is a thin 5-pixel wide area on the left edge
+        region.setOnMouseMoved(e -> {
+            // If the mouse is within the left 5 pixels, show the resize cursor
+            if (e.getX() < 10) {
+                region.setCursor(Cursor.H_RESIZE);
+            } else {
+                region.setCursor(Cursor.DEFAULT);
+            }
+        });
+
+        region.setOnMouseDragged(e -> {
+            if (region.getCursor() == Cursor.H_RESIZE) {
+                // Calculate how much the user dragged
+                // Since it's on the right side, dragging left (negative X)
+                // increases the width.
+                double newWidth = region.getWidth() - e.getX();
+
+                double windowWidth = region.getScene().getWidth();
+
+                if (newWidth > 200 && newWidth < (windowWidth - 50)) {
+                    region.setPrefWidth(newWidth);
+                }
+            }
+        });
     }
 
     /**
