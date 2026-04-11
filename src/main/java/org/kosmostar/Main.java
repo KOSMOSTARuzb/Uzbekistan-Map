@@ -23,18 +23,16 @@ import org.mapsforge.map.layer.cache.TileCache;
 import org.mapsforge.map.layer.renderer.TileRendererLayer;
 import org.mapsforge.map.reader.MapFile;
 import org.mapsforge.map.rendertheme.ExternalRenderTheme;
+import org.mapsforge.map.util.MapViewProjection;
 import org.mapsforge.poi.storage.PoiPersistenceManager;
 
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.MouseWheelEvent;
+import java.awt.event.MouseWheelListener;
 import java.io.*;
-import java.net.URI;
-import java.net.URL;
-import java.net.URLConnection;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 public class Main extends Application {
 
@@ -228,10 +226,64 @@ public class Main extends Application {
             }
         });
 
+        for (MouseWheelListener listener : mapView.getMouseWheelListeners()) {
+            mapView.removeMouseWheelListener(listener);
+        }
+
+        mapView.addMouseWheelListener(this::handleMouseWheelEvent);
+
         JPanel jPanel = new JPanel(new BorderLayout());
         jPanel.add(mapView, BorderLayout.CENTER);
 
         swingNode.setContent(jPanel);
+    }
+
+    private void handleMouseWheelEvent(MouseWheelEvent e){
+        byte zoomDelta = (byte) (e.getWheelRotation() < 0 ? 1 : -1);
+        byte currentZoom = mapView.getModel().mapViewPosition.getZoomLevel();
+        final byte newZoom = (byte) (currentZoom + zoomDelta);
+
+        // Prevent zooming past limits (adjust to your map's max zoom)
+        if (newZoom < 0 || newZoom > 22) return;
+
+        MapViewProjection proj = mapView.getMapViewProjection();
+        LatLong mouseLatLong = proj.fromPixels(e.getX(), e.getY());
+        if (mouseLatLong == null) return;
+
+        // --- I DID THE MATH FOR YOU ---
+        int tileSize = mapView.getModel().displayModel.getTileSize();
+        long newMapSize = org.mapsforge.core.util.MercatorProjection.getMapSize(newZoom, tileSize);
+
+        double worldPixelX = org.mapsforge.core.util.MercatorProjection.longitudeToPixelX(mouseLatLong.longitude, newMapSize);
+        double worldPixelY = org.mapsforge.core.util.MercatorProjection.latitudeToPixelY(mouseLatLong.latitude, newMapSize);
+
+        double centerWorldPixelX = worldPixelX - e.getX() + (mapView.getWidth() / 2.0);
+        double centerWorldPixelY = worldPixelY - e.getY() + (mapView.getHeight() / 2.0);
+
+        final LatLong targetCenter = new LatLong(
+                org.mapsforge.core.util.MercatorProjection.pixelYToLatitude(centerWorldPixelY, newMapSize),
+                org.mapsforge.core.util.MercatorProjection.pixelXToLongitude(centerWorldPixelX, newMapSize)
+        );
+        // ------------------------------
+
+        // 1. Set the Pivot point so Mapsforge animates visually toward the mouse
+        mapView.getModel().mapViewPosition.setPivot(mouseLatLong);
+
+        // 2. Trigger the native Mapsforge zoom animation
+        mapView.getModel().mapViewPosition.zoom(zoomDelta, true);
+
+        // 3. Prevent the "snap-back" by locking in our calculated center
+        // exactly when the Mapsforge animation finishes (250 milliseconds).
+        Timer timer = new Timer(250, new java.awt.event.ActionListener() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                mapView.getModel().mapViewPosition.setMapPosition(
+                        new org.mapsforge.core.model.MapPosition(targetCenter, newZoom)
+                );
+            }
+        });
+        timer.setRepeats(false);
+        timer.start();
     }
 
     /**
@@ -292,7 +344,7 @@ public class Main extends Application {
 
     private void setupPoiDownloadButton() {
         poiPanel.getChildren().clear();
-        Button enablePoiBtn = new Button("Initialize POI Interaction");
+        Button enablePoiBtn = new Button("Download Places Database");
         enablePoiBtn.setStyle("-fx-base: #3498db; -fx-text-fill: white; -fx-font-weight: bold;");
 
         enablePoiBtn.setOnAction(e -> {
@@ -324,6 +376,8 @@ public class Main extends Application {
         searchBox.setPromptText("Filter results (e.g. cafe)...");
 
         poiDetailsLabel = new Label("Click on the map to find nearby places.");
+        poiDetailsLabel.setMinHeight(Region.USE_PREF_SIZE);
+        VBox.setVgrow(poiDetailsLabel, Priority.ALWAYS);
         poiDetailsLabel.setWrapText(true);
 
         poiPanel.getChildren().addAll(new Label("Search & Info:"), searchBox, poiDetailsLabel);
@@ -342,66 +396,5 @@ public class Main extends Application {
             mapView.destroyAll();
         }
         super.stop();
-    }
-
-    // =========================================================
-    // INNER CLASS: Download Task Utility
-    // =========================================================
-    public static class DownloadTask extends Task<Void> {
-        private final String fileUrl;
-        private final File destFolder;
-
-        public DownloadTask(String fileUrl, File destFolder) {
-            this.fileUrl = fileUrl;
-            this.destFolder = destFolder;
-        }
-
-        @Override
-        protected Void call() throws Exception {
-            if (!destFolder.exists()) destFolder.mkdirs();
-
-            URL url = URI.create(fileUrl).toURL();
-            URLConnection connection = url.openConnection();
-            long fileSize = connection.getContentLengthLong();
-
-            File tempZip = new File(destFolder, "temp_" + System.currentTimeMillis() + ".zip");
-            try (InputStream in = connection.getInputStream();
-                 FileOutputStream out = new FileOutputStream(tempZip)) {
-
-                byte[] buffer = new byte[8192];
-                long downloaded = 0;
-                int read;
-                while ((read = in.read(buffer)) != -1) {
-                    out.write(buffer, 0, read);
-                    downloaded += read;
-                    updateProgress(downloaded, fileSize);
-                    updateMessage(String.format("Downloading: %d MB / %d MB",
-                            downloaded / 1024 / 1024, fileSize / 1024 / 1024));
-                }
-            }
-
-            updateMessage("Extracting files...");
-            try (ZipInputStream zis = new ZipInputStream(new FileInputStream(tempZip))) {
-                ZipEntry entry;
-                while ((entry = zis.getNextEntry()) != null) {
-                    File unzippedFile = new File(destFolder, entry.getName());
-
-                    // --- FIXED UNZIP LOGIC TO SUPPORT THEME SUBFOLDERS ---
-                    if (entry.isDirectory()) {
-                        unzippedFile.mkdirs();
-                    } else {
-                        // Ensure the parent directory for the resource icon exists
-                        unzippedFile.getParentFile().mkdirs();
-                        try (FileOutputStream fos = new FileOutputStream(unzippedFile)) {
-                            zis.transferTo(fos);
-                        }
-                    }
-                }
-            }
-
-            tempZip.delete();
-            updateMessage("Done!");
-            return null;
-        }
     }
 }

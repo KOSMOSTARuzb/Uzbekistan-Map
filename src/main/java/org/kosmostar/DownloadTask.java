@@ -46,7 +46,11 @@ public class DownloadTask extends Task<Void> {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 File unzippedFile = new File(destFolder, entry.getName());
-                if (!entry.isDirectory()) {
+                if (entry.isDirectory()) {
+                    unzippedFile.mkdirs();
+                } else {
+                    // Ensure the parent directory for the resource icon exists
+                    unzippedFile.getParentFile().mkdirs();
                     try (FileOutputStream fos = new FileOutputStream(unzippedFile)) {
                         zis.transferTo(fos);
                     }
