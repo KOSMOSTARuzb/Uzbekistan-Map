@@ -20,7 +20,7 @@ import org.mapsforge.map.datastore.MapDataStore;
 import org.mapsforge.map.layer.cache.TileCache;
 import org.mapsforge.map.layer.renderer.TileRendererLayer;
 import org.mapsforge.map.reader.MapFile;
-import org.mapsforge.map.rendertheme.internal.MapsforgeThemes;
+import org.mapsforge.map.rendertheme.ExternalRenderTheme;
 
 import javax.swing.*;
 import java.awt.*;
@@ -41,10 +41,12 @@ public class Main extends Application {
 
     private final String MAP_URL = "https://ftp.gwdg.de/pub/misc/openstreetmap/openandromaps/mapsV5/asia/Uzbekistan.zip";
     private final String POI_URL = "https://ftp.gwdg.de/pub/misc/openstreetmap/openandromaps/pois/mapsforge/asia/Uzbekistan.Poi.zip";
+    private final String THEME_URL = "https://www.openandromaps.org/wp-content/users/tobias/Elevate.zip";
 
     private final File dataDir = new File("map_data");
     private File mapFile;
     private File poiFile;
+    private final File themeFile = new File(dataDir, "Elevate.xml"); // The main Elevate theme file
 
     private MapView mapView;
     private Stage mainStage;
@@ -61,7 +63,7 @@ public class Main extends Application {
         // Check if data directory and files exist
         findLocalFiles();
 
-        if (mapFile == null || poiFile == null) {
+        if (mapFile == null || poiFile == null || !themeFile.exists()) {
             showDownloadUI();
         } else {
             showMapUI();
@@ -107,18 +109,24 @@ public class Main extends Application {
         progressLabel.textProperty().bind(mapTask.messageProperty());
 
         mapTask.setOnSucceeded(e -> {
-            // 2. Download POI once map is done
+            // 2. Download POI
             infoLabel.setText("Downloading POI Database...");
             DownloadTask poiTask = new DownloadTask(POI_URL, dataDir);
-            progressBar.progressProperty().unbind();
-            progressLabel.textProperty().unbind();
-
             progressBar.progressProperty().bind(poiTask.progressProperty());
             progressLabel.textProperty().bind(poiTask.messageProperty());
 
-            poiTask.setOnSucceeded(event -> {
-                findLocalFiles();
-                showMapUI(); // Transition to main app
+            poiTask.setOnSucceeded(e2 -> {
+                // 3. Download Elevate Theme
+                infoLabel.setText("Downloading Elevate Map Theme...");
+                DownloadTask themeTask = new DownloadTask(THEME_URL, dataDir);
+                progressBar.progressProperty().bind(themeTask.progressProperty());
+                progressLabel.textProperty().bind(themeTask.messageProperty());
+
+                themeTask.setOnSucceeded(e3 -> {
+                    findLocalFiles();
+                    showMapUI();
+                });
+                new Thread(themeTask).start();
             });
 
             new Thread(poiTask).start();
@@ -165,7 +173,14 @@ public class Main extends Application {
                 mapView.getModel().mapViewPosition,
                 AwtGraphicFactory.INSTANCE
         );
-        tileRendererLayer.setXmlRenderTheme(MapsforgeThemes.DEFAULT);
+
+        // --- APPLIED EXTERNAL ELEVATE THEME HERE ---
+        try {
+            tileRendererLayer.setXmlRenderTheme(new ExternalRenderTheme(themeFile));
+        } catch (FileNotFoundException e) {
+            System.err.println("Theme file not found!");
+            e.printStackTrace();
+        }
 
         mapView.getLayerManager().getLayers().add(tileRendererLayer);
 
@@ -262,8 +277,13 @@ public class Main extends Application {
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
                     File unzippedFile = new File(destFolder, entry.getName());
-                    // Skip directories
-                    if (!entry.isDirectory()) {
+
+                    // --- FIXED UNZIP LOGIC TO SUPPORT THEME SUBFOLDERS ---
+                    if (entry.isDirectory()) {
+                        unzippedFile.mkdirs();
+                    } else {
+                        // Ensure the parent directory for the resource icon exists
+                        unzippedFile.getParentFile().mkdirs();
                         try (FileOutputStream fos = new FileOutputStream(unzippedFile)) {
                             zis.transferTo(fos);
                         }
