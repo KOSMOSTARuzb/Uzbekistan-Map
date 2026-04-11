@@ -23,6 +23,7 @@ import org.mapsforge.map.layer.cache.TileCache;
 import org.mapsforge.map.layer.renderer.TileRendererLayer;
 import org.mapsforge.map.reader.MapFile;
 import org.mapsforge.map.rendertheme.ExternalRenderTheme;
+import org.mapsforge.poi.storage.PoiPersistenceManager;
 
 import javax.swing.*;
 import java.awt.*;
@@ -32,10 +33,6 @@ import java.io.*;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLConnection;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.ResultSet;
-import java.sql.Statement;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -54,6 +51,11 @@ public class Main extends Application {
     private Stage mainStage;
     private VBox poiPanel;
     private Label poiDetailsLabel;
+
+    private PoiPersistenceManager poiPersistenceManager;
+    private org.mapsforge.poi.storage.PoiCategoryManager poiCategoryManager;
+
+    private TextField searchBox;
 
     public static void main(String[] args) {
         launch(args);
@@ -84,7 +86,18 @@ public class Main extends Application {
         if (files != null) {
             for (File file : files) {
                 if (file.getName().endsWith(".map")) mapFile = file;
-                if (file.getName().endsWith(".poi") || file.getName().endsWith(".db")) poiFile = file;
+                if (file.getName().endsWith(".poi") || file.getName().endsWith(".db")) {
+                    poiFile = file;
+                    if (poiPersistenceManager == null) {
+                        try {
+                            poiPersistenceManager = org.mapsforge.poi.awt.storage.AwtPoiPersistenceManagerFactory
+                                    .getPoiPersistenceManager(poiFile.getPath(), true);
+                            poiCategoryManager = poiPersistenceManager.getCategoryManager();
+                        } catch (Exception ex) {
+                            System.err.println("Could not open POI file: " + ex.getMessage());
+                        }
+                    }
+                }
             }
         }
     }
@@ -225,13 +238,56 @@ public class Main extends Application {
      * Handle the map click interactions (Query POI db here)
      */
     private void handleMapClick(LatLong location) {
-        System.out.println("Clicked on Map at: " + location.latitude + ", " + location.longitude);
-
-        if (poiFile != null && poiDetailsLabel != null) {
-            // Update the side panel dynamically
-            poiDetailsLabel.setText(String.format("Location Selected:\nLat: %.5f\nLon: %.5f\n\n(Ready for SQLite spatial query)",
-                    location.latitude, location.longitude));
+        if (poiPersistenceManager == null) {
+            if (poiDetailsLabel != null) poiDetailsLabel.setText("POI Database not initialized.");
+            return;
         }
+
+        // Search parameters
+        int searchRadiusMeters = 500;
+        int resultLimit = 50;
+
+        Task<String> queryTask = new Task<>() {
+            @Override
+            protected String call() {
+                StringBuilder results = new StringBuilder();
+                String filterText = searchBox.getText().toLowerCase();
+
+                java.util.Collection<org.mapsforge.poi.storage.PointOfInterest> pois =
+                        poiPersistenceManager.findNearPosition(
+                                location,           // point (center of search)
+                                searchRadiusMeters, // distance (in meters)
+                                null,               // filter (PoiCategoryFilter - null for all)
+                                null,               // patterns (List<Tag> - null for all)
+                                location,           // orderBy (Sort results relative to click location)
+                                resultLimit,        // limit
+                                true                // findCategories
+                        );
+
+                int count = 0;
+                for (org.mapsforge.poi.storage.PointOfInterest poi : pois) {
+                    String name = poi.getName() != null ? poi.getName() : "Unnamed Place";
+
+                    // Filter based on user search text
+                    if (!filterText.isEmpty() && !name.toLowerCase().contains(filterText)) {
+                        continue;
+                    }
+
+                    results.append("📍 ").append(name).append("\n");
+                    count++;
+                    if (count >= 12) break; // Display limit for the panel
+                }
+
+                if (count == 0) {
+                    return String.format("No POIs found within %dm.", searchRadiusMeters);
+                } else {
+                    return String.format("Near (within %dm):\n", searchRadiusMeters) + results.toString();
+                }
+            }
+        };
+
+        queryTask.setOnSucceeded(e -> poiDetailsLabel.setText(queryTask.getValue()));
+        new Thread(queryTask).start();
     }
 
     private void setupPoiDownloadButton() {
@@ -264,20 +320,28 @@ public class Main extends Application {
     private void setupPoiSearchUI() {
         poiPanel.getChildren().clear();
 
-        TextField searchBox = new TextField();
-        searchBox.setPromptText("Search POI...");
+        searchBox = new TextField();
+        searchBox.setPromptText("Filter results (e.g. cafe)...");
 
-        poiDetailsLabel = new Label("POI Database ready.\nClick on the map to query locations.");
+        poiDetailsLabel = new Label("Click on the map to find nearby places.");
         poiDetailsLabel.setWrapText(true);
 
-        poiPanel.getChildren().addAll(searchBox, poiDetailsLabel);
+        poiPanel.getChildren().addAll(new Label("Search & Info:"), searchBox, poiDetailsLabel);
     }
 
     @Override
-    public void stop() {
-        if (mapView != null) {
-            mapView.destroyAll(); // Memory cleanup
+    public void stop() throws Exception {
+        try {
+            if (poiPersistenceManager != null) {
+                poiPersistenceManager.close();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
+        if (mapView != null) {
+            mapView.destroyAll();
+        }
+        super.stop();
     }
 
     // =========================================================
