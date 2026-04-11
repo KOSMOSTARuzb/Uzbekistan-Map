@@ -54,7 +54,7 @@ public class Main extends Application {
     private Stage mainStage;
     private VBox poiPanel;
     private Accordion poiAccordion;
-    private ScrollPane poiScrollPane;
+    private BorderPane mainLayout;
 
     private PoiPersistenceManager poiPersistenceManager;
     private org.mapsforge.poi.storage.PoiCategoryManager poiCategoryManager;
@@ -153,29 +153,41 @@ public class Main extends Application {
      */
     private void showMapUI() {
         AwtGraphicFactory.INSTANCE.getClass();
-        BorderPane root = new BorderPane(); // Changed from StackPane
+
+        StackPane root = new StackPane();
+        mainLayout = new BorderPane();
         SwingNode swingNode = new SwingNode();
+        mainLayout.setCenter(swingNode);
 
-        // --- SIDEBAR SETUP ---
-        poiPanel = new VBox(10);
+        // 1. Prepare Sidebar container
+        poiPanel = new VBox(15);
         poiPanel.setPadding(new Insets(15));
-        poiPanel.setPrefWidth(380); // Much wider for readability
-        poiPanel.setStyle("-fx-background-color: #f4f4f4; -fx-border-color: #bdc3c7; -fx-border-width: 0 0 0 1;");
+        poiPanel.setPrefWidth(380);
+        poiPanel.setStyle("-fx-background-color: #ffffff; -fx-border-color: #bdc3c7; -fx-border-width: 0 0 0 1;");
 
-        // Initialize panel content
-        if (poiFile == null) {
-            setupPoiDownloadButton();
-        } else {
-            setupPoiSearchUI();
-        }
+        // 2. Floating Action Button
+        Button actionButton = new Button();
+        actionButton.setStyle("-fx-background-color: #2c3e50; -fx-text-fill: white; -fx-font-weight: bold; " +
+                "-fx-background-radius: 20; -fx-padding: 10 20; -fx-cursor: hand; " +
+                "-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 10, 0, 0, 0);");
 
-        // Map in Center, POI list on the Right
-        root.setCenter(swingNode);
-        root.setRight(poiPanel);
+        // BINDING: Hide floating button if sidebar is currently in the layout
+        actionButton.visibleProperty().bind(mainLayout.rightProperty().isNull());
+
+        actionButton.setText("Show Places Panel");
+        actionButton.setStyle(actionButton.getStyle() + "-fx-background-color: #2c3e50;");
+        actionButton.setOnAction(e -> handleOpenSidebar());
+
+        AnchorPane buttonLayer = new AnchorPane(actionButton);
+        AnchorPane.setTopAnchor(actionButton, 20.0);
+        AnchorPane.setRightAnchor(actionButton, 20.0);
+        buttonLayer.setPickOnBounds(false);
+
+        root.getChildren().addAll(mainLayout, buttonLayer);
 
         SwingUtilities.invokeLater(() -> createMapContent(swingNode));
 
-        Scene scene = new Scene(root, 1200, 800); // Made default window slightly wider
+        Scene scene = new Scene(root, 1200, 800);
         mainStage.setScene(scene);
         mainStage.show();
     }
@@ -293,7 +305,7 @@ public class Main extends Application {
      * Handle the map click interactions (Query POI db here)
      */
     private void handleMapClick(LatLong location) {
-        if (poiPersistenceManager == null) return;
+        if (poiPersistenceManager == null || mainLayout.getRight()==null) return;
 
         int searchRadiusMeters = 500;
         int resultLimit = 30;
@@ -335,29 +347,32 @@ public class Main extends Application {
 
     private void setupPoiDownloadButton() {
         poiPanel.getChildren().clear();
-        Button enablePoiBtn = new Button("Download Places Database");
-        enablePoiBtn.setStyle("-fx-base: #3498db; -fx-text-fill: white; -fx-font-weight: bold;");
+        poiPanel.getChildren().add(createPanelHeader("Places Database"));
+        Label info = new Label("Offline Places Database (POI)\n\nThis will allow you to search for cafes, hotels, and sights in Uzbekistan without an internet connection.");
+        info.setWrapText(true);
 
-        enablePoiBtn.setOnAction(e -> {
+        Button startDownloadBtn = new Button("Start Download (approx. 40MB)");
+        startDownloadBtn.setMaxWidth(Double.MAX_VALUE);
+
+        startDownloadBtn.setOnAction(e -> {
             poiPanel.getChildren().clear();
             Label progressLabel = new Label("Downloading POI Database...");
             ProgressBar progressBar = new ProgressBar(0);
-            progressBar.setPrefWidth(220);
+            progressBar.setPrefWidth(350);
             poiPanel.getChildren().addAll(progressLabel, progressBar);
 
-            // Download asynchronously while user explores the map
             DownloadTask poiTask = new DownloadTask(POI_URL, dataDir);
             progressBar.progressProperty().bind(poiTask.progressProperty());
             progressLabel.textProperty().bind(poiTask.messageProperty());
 
             poiTask.setOnSucceeded(evt -> {
-                findLocalFiles(); // Register the newly downloaded .poi file
-                setupPoiSearchUI(); // Switch UI to Search mode
+                findLocalFiles();
+                setupPoiSearchUI();
             });
             new Thread(poiTask).start();
         });
 
-        poiPanel.getChildren().add(enablePoiBtn);
+        poiPanel.getChildren().addAll(new Label("Places Database"), info, startDownloadBtn);
     }
 
     private TitledPane createPoiPane(org.mapsforge.poi.storage.PointOfInterest poi) {
@@ -406,21 +421,49 @@ public class Main extends Application {
         return pane;
     }
 
+    private HBox createPanelHeader(String title) {
+        HBox header = new HBox();
+        header.setAlignment(Pos.CENTER_LEFT);
+
+        Label titleLabel = new Label(title);
+        titleLabel.setStyle("-fx-font-size: 16px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;");
+
+        // Spacer to push the close button to the far right
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Button panelCloseButton = new Button("✕"); // Using a Unicode 'X'
+        panelCloseButton.setStyle("-fx-background-color: transparent; -fx-text-fill: #7f8c8d; -fx-font-size: 18px; -fx-font-weight: bold; -fx-cursor: hand;");
+        panelCloseButton.setOnAction(e -> mainLayout.setRight(null)); // Closes the panel
+
+        header.getChildren().addAll(titleLabel, spacer, panelCloseButton);
+        return header;
+    }
+
+    private void handleOpenSidebar() {
+        if (poiFile == null) {
+            setupPoiDownloadButton();
+        } else {
+            setupPoiSearchUI();
+        }
+        mainLayout.setRight(poiPanel);
+    }
+
     private void setupPoiSearchUI() {
         poiPanel.getChildren().clear();
-        poiPanel.setPrefWidth(400); // Make it slightly wider for details
-//        poiPanel.setMaxHeight(500);
+        poiPanel.getChildren().add(createPanelHeader("Nearby Places"));
+
         searchBox = new TextField();
         searchBox.setPromptText("Filter results (e.g. cafe)...");
 
         poiAccordion = new Accordion();
 
-        poiScrollPane = new ScrollPane(poiAccordion);
+        ScrollPane poiScrollPane = new ScrollPane(poiAccordion);
         poiScrollPane.setFitToWidth(true);
         poiScrollPane.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
         VBox.setVgrow(poiScrollPane, Priority.ALWAYS);
 
-        poiPanel.getChildren().addAll(new Label("Nearby Places:"), searchBox, poiScrollPane);
+        poiPanel.getChildren().addAll(searchBox, poiScrollPane);
     }
 
     @Override
