@@ -392,7 +392,11 @@ public class Main extends Application {
 
         int row = 0;
         for (Tag tag : poi.getTags()) {
-            Label key = new Label(tag.key.replace("_", " ") + ":");
+            String keyname = tag.key;
+            if(keyname==null || keyname.isEmpty())keyname=" ";
+            keyname = keyname.replace("_", " ").replace(':', ' ');
+            keyname = keyname.substring(0, 1).toUpperCase() + keyname.substring(1);
+            Label key = new Label( keyname + ":");
             key.setStyle("-fx-font-weight: bold; -fx-text-fill: #7f8c8d; -fx-font-size: 11px;");
             Text val = new Text(tag.value);
             val.setWrappingWidth(220);
