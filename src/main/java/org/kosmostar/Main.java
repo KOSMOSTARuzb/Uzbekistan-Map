@@ -434,7 +434,7 @@ public class Main extends Application {
 
         flyButton.setOnAction(e -> {
             mapView.getModel().mapViewPosition.setCenter(poi.getLatLong());
-            mapView.getModel().mapViewPosition.setZoomLevel((byte) 16);
+            mapView.getModel().mapViewPosition.setZoomLevel((byte) (currentScope==SearchScope.GEOZ? 11 : 16));
         });
 
         content.getChildren().add(flyButton);
