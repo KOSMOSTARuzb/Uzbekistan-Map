@@ -127,6 +127,7 @@ public class Main extends Application {
 
         layout.getChildren().addAll(infoLabel, progressBar, progressLabel);
         Scene scene = new Scene(layout, 500, 250);
+        mainStage.centerOnScreen();
         mainStage.setScene(scene);
         mainStage.show();
 
@@ -188,6 +189,7 @@ public class Main extends Application {
         SwingUtilities.invokeLater(() -> createMapContent(swingNode));
 
         Scene scene = new Scene(root, 1200, 800);
+        mainStage.centerOnScreen();
         mainStage.setScene(scene);
         mainStage.show();
     }
