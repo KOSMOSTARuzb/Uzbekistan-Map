@@ -34,6 +34,7 @@ import org.mapsforge.map.util.MapViewProjection;
 import org.mapsforge.poi.storage.PoiCategoryManager;
 import org.mapsforge.poi.storage.PoiPersistenceManager;
 import org.mapsforge.poi.storage.PointOfInterest;
+import org.mapsforge.poi.storage.UnknownPoiCategoryException;
 
 import javax.swing.*;
 import java.awt.BorderLayout;
@@ -68,6 +69,11 @@ public class Main extends Application {
 
     private TextField searchBox;
     private ToggleButton globalToggle;
+
+    private enum SearchScope { GLOBAL, LOCAL, GEOZ }
+    private SearchScope currentScope = SearchScope.GLOBAL;
+
+    private final String[] GEO_CATEGORIES = {"city", "town", "village", "suburb", "hamlet", "administrative"};
 
     public static void main(String[] args) {
         launch(args);
@@ -313,11 +319,19 @@ public class Main extends Application {
     private void handleMapClick(LatLong location) {
         if (poiPersistenceManager == null || mainLayout.getRight() == null) return;
 
-        Task<List<PointOfInterest>> queryTask = new Task<>() {
+        Task<List<PointOfInterest>> queryTask = new Task<> () {
             @Override
             protected List<PointOfInterest> call() {
+                org.mapsforge.poi.storage.PoiCategoryFilter filter = (currentScope == SearchScope.GEOZ) ? getGeoZFilter() : null;
+
                 Collection<PointOfInterest> pois = poiPersistenceManager.findNearPosition(
-                        location, 500, null, null, location, 30, true
+                        location,
+                        (currentScope == SearchScope.GEOZ) ? 20000 : 500,
+                        filter,
+                        null,
+                        location,
+                        30,
+                        true
                 );
                 return new java.util.ArrayList<>(pois);
             }
@@ -378,6 +392,9 @@ public class Main extends Application {
         if (poi.getCategory() != null && poi.getCategory().getTitle() != null) {
             String catTitle = poi.getCategory().getTitle();
             Label catLabel = new Label("Category: " + (catTitle.contains("/") ? catTitle.split("/")[0] : catTitle));
+            catLabel.setOnMouseClicked( e->{
+                System.out.println("Name:"+catTitle+":");
+            });
             catLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #2c3e50;");
             content.getChildren().add(catLabel);
         }
@@ -462,22 +479,28 @@ public class Main extends Application {
         poiPanel.getChildren().add(createPanelHeader("Search Places"));
 
         searchBox = new TextField();
-        searchBox.setPromptText("Search (e.g. Cafe)...");
+        searchBox.setPromptText("Search...");
         HBox.setHgrow(searchBox, Priority.ALWAYS);
 
-        globalToggle = new ToggleButton("Global");
-        globalToggle.setSelected(true);
-        globalToggle.setStyle("-fx-cursor: hand; -fx-font-weight: bold;");
+        Button scopeBtn = new Button("Scope: Global");
+        scopeBtn.setPrefWidth(110);
+        scopeBtn.setStyle("-fx-cursor: hand; -fx-font-weight: bold;");
 
-        globalToggle.selectedProperty().addListener((obs, oldVal, newVal) -> {
-            globalToggle.setText(newVal ? "Global" : "Local");
+        scopeBtn.setOnAction(e -> {
+            if (currentScope == SearchScope.GLOBAL) currentScope = SearchScope.LOCAL;
+            else if (currentScope == SearchScope.LOCAL) currentScope = SearchScope.GEOZ;
+            else currentScope = SearchScope.GLOBAL;
+
+            scopeBtn.setText("Scope: " + (currentScope == SearchScope.GEOZ ? "Geo-Z" :
+                    currentScope == SearchScope.LOCAL ? "Local" : "Global"));
+
             performSearch(searchBox.getText());
         });
 
-        HBox searchRow = new HBox(5, searchBox, globalToggle);
+        HBox searchRow = new HBox(5, searchBox, scopeBtn);
         searchRow.setAlignment(Pos.CENTER_LEFT);
 
-        searchBox.textProperty().addListener((observable, oldValue, newValue) -> {
+        searchBox.textProperty().addListener((obs, old, newValue) -> {
             searchDebounce.setOnFinished(e -> performSearch(newValue));
             searchDebounce.playFromStart();
         });
@@ -498,9 +521,7 @@ public class Main extends Application {
         }
 
         final BoundingBox searchArea;
-        if (globalToggle.isSelected()) {
-            searchArea = new BoundingBox(37.0, 55.0, 46.5, 74.0);
-        } else {
+        if (currentScope == SearchScope.LOCAL) {
             MapViewProjection proj = mapView.getMapViewProjection();
 
             LatLong topLeft = proj.fromPixels(0, 0);
@@ -516,6 +537,8 @@ public class Main extends Application {
             } else {
                 searchArea = new BoundingBox(37.0, 55.0, 46.5, 74.0);
             }
+        } else {
+            searchArea = new BoundingBox(37.0, 55.0, 46.5, 74.0);
         }
 
         Task<List<PointOfInterest>> searchTask = new Task<>() {
@@ -524,9 +547,12 @@ public class Main extends Application {
                 List<Tag> patterns = new java.util.ArrayList<>();
                 patterns.add(new Tag("name", query));
 
+                org.mapsforge.poi.storage.PoiCategoryFilter filter = (currentScope == SearchScope.GEOZ) ? getGeoZFilter() : null;
+
+
                 Collection<PointOfInterest> results = poiPersistenceManager.findInRect(
                         searchArea,
-                        null,
+                        filter,
                         patterns,
                         null,
                         50,
@@ -540,6 +566,25 @@ public class Main extends Application {
         searchTask.setOnSucceeded(e -> updateResultsList(searchTask.getValue()));
         searchTask.setOnFailed(e -> searchTask.getException().printStackTrace());
         new Thread(searchTask).start();
+    }
+
+    private org.mapsforge.poi.storage.PoiCategoryFilter getGeoZFilter() {
+        if (poiPersistenceManager == null) return null;
+
+        org.mapsforge.poi.storage.WhitelistPoiCategoryFilter filter = new org.mapsforge.poi.storage.WhitelistPoiCategoryFilter();
+        org.mapsforge.poi.storage.PoiCategoryManager manager = poiPersistenceManager.getCategoryManager();
+
+        String[] geoKeys = {"City / Großstadt"};
+
+        for (String key : geoKeys) {
+            try {
+                org.mapsforge.poi.storage.PoiCategory cat = manager.getPoiCategoryByTitle(key);
+                if (cat != null) {
+                    filter.addCategory(cat);
+                }
+            }catch (UnknownPoiCategoryException _){}
+        }
+        return filter;
     }
 
     @Override
